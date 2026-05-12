@@ -1,108 +1,148 @@
-# Tado Weather Control
+# Tado Automation Suite
 
-A robust, dependency-light Bash script designed to automatically manage your Tado Heating and Air Conditioning zones based on real-time weather data from Open-Meteo.
+A robust, dependency-light suite of Bash scripts designed to manage your Tado Heating and Air Conditioning zones.
 
-By continuously evaluating the outside temperature (and optionally inside temperature), this script prevents your heating from running on unusually warm days and manages your air conditioning logically, saving energy without sacrificing comfort.
+This suite includes an automated weather-based climate control script to save energy without sacrificing comfort, alongside powerful manual utility scripts to query states and force configurations across your local network or via Cron.
 
 ## Features
 
-* **No Weather API Keys Required:** Uses the free, open Open-Meteo API for geocoding and weather fetching (with automatic coordinate fallback).
-* **Smart Device Code Authentication:** Fully supports Tado's modern OAuth2 Device Code flow. No passwords stored.
-* **Auto Mode:** Intelligent evaluation comparing inside vs. outside temperatures.
-* **AC Support:** Automatically applies inverse logic for Air Conditioning zones.
-* **Manual Overrides:** Instantly force all zones `on`, `off`, `reset`, or to a specific temperature (e.g., `21C`).
-* **Multi-Home Support:** Specify exactly which Tado home to control by name or ID.
-* **Smart Zone Protection:** Respects existing manual temperature overrides unless specifically forced.
-* **Rate-Limit Safe:** Built-in exponential backoff to respect Tado's API limits.
-* **Comprehensive Logging:** Syslog integration and detailed output showing current vs. set temperatures for each zone.
+* **No Passwords Stored:** Fully supports Tado's modern OAuth2 Device Code flow. Authenticate once, and all tools share the same securely rotated token.
+
+* **Weather Automation:** Intelligently checks Open-Meteo to disable heating on unusually warm days or compare inside vs. outside temperatures (`tado_weather_control.sh`).
+
+* **Instant Overrides:** Turn zones `on`, `off`, `reset`, or to specific temperatures via the command line (`tado_set.sh`).
+
+* **Easy Status Checks:** Instantly see the temperature and schedule state of every zone in your home. Or, output directly to JSON for third-party integrations (`tado_get.sh`).
+
+* **Multi-Home & Multi-Zone:** Specify exact Tado homes and zones by name or ID across all scripts.
 
 ## Prerequisites
 
 Ensure the following common packages are installed on your system:
+
 * `curl` (for making API requests)
+
 * `jq` (for parsing JSON responses)
+
 * `bc` (for floating-point math comparisons)
+
 * `logger` (for syslog integration, usually pre-installed on Linux/macOS)
 
 **Debian/Ubuntu:**
-```bash
-sudo apt-get install curl jq bc
-```
 
-**macOS (via Homebrew):**
-```bash
-brew install jq bc
+```
+sudo apt-get install curl jq bc
+
 ```
 
 ## Setup & Authentication
 
-1. Download the script and make it executable:
-   ```bash
-   chmod +x tado_weather_control.sh
-   ```
-2. Run the one-time authentication flow to securely link your Tado account:
-   ```bash
-   ./tado_weather_control.sh --auth
-   ```
-   *The script will provide a link. Open it in your browser, log in to Tado, and approve the application. The script will securely save an expiring refresh token to `~/.tado_token` and automatically handle future rotations.*
+1. Download the scripts and make them executable:
 
-## Usage
+   ```
+   chmod +x tado_weather_control.sh tado_get.sh tado_set.sh
+   
+   ```
 
-Run the script manually to process the default weather logic:
-```bash
-./tado_weather_control.sh
+2. Run the one-time authentication flow to securely link your Tado account. **You only need to do this on one of the scripts; they share the same token (`~/.tado_token`)**:
+
+   ```
+   ./tado_get.sh --auth
+   
+   ```
+
+   *The script will provide a link. Open it in your browser, log in to Tado, and approve the application.*
+
+## Tools Included
+
+### 1. `tado_get.sh` (Status & Monitoring)
+
+Lists all zones across all your Tado homes by default, including their ID, name, schedule state, current temperature, and set temperature.
+
+**Usage:**
+
+```
+# List all zones in all available homes (Default)
+./tado_get.sh
+
+# List all zones across all homes and format the output as JSON
+./tado_get.sh --json
+
+# List zones for a specific home
+./tado_get.sh --home "Summer House"
+
+# Get details for a specific zone only
+./tado_get.sh --zone "Living Room"
+
 ```
 
-### Commands
+### 2. `tado_set.sh` (Manual Override)
 
-| Command | Description |
-| :--- | :--- |
-| `auto` | **Smart Mode:** Overrides default weather logic. Switches heating OFF if Outside Temp > Inside Temp, OR if Inside Temp is higher than Outside Temp by more than 10°C. |
-| `on` | **Resume:** Deletes manual overlays and returns all zones to their Smart Schedule. |
-| `off` | **Disable:** Puts all Heating zones into MANUAL OFF mode. (AC zones will be turned ON). |
-| `reset` | **Reset:** Resumes the Smart Schedule for ALL zones, regardless of type. |
-| `<temp>C` | **Set Temp:** Forces all Heating zones to a specific temperature (0-25) until the next scheduled block begins. Example: `./tado_weather_control.sh 21.5C` |
+Manually force the state or temperature of specific zones, bypassing schedules.
 
-### Flags
+**Commands:**
 
-| Flag | Description |
-| :--- | :--- |
-| `--city <name>` | Override the default configured city for the weather check (e.g., `--city "New York"`). URL-encodes automatically. |
-| `--home <target>`| Specify which Tado home to control by exact Name or ID number. Useful for accounts with multiple homes. |
-| `--force` | Force overwrite existing manual temperature overrides on heating zones. By default, the script skips zones the user has manually adjusted. |
-| `--dryrun` | Simulates the execution. Fetches weather and evaluates states, but does NOT send PUT/DELETE commands to Tado. |
-| `--notime` | Disables internal date/time stamps in standard output logging. |
-| `--syslog` | Pipes output directly to your system's syslog (`/var/log/syslog` or `journalctl`) under the tag `tado_weather`. |
-| `-h, --help` | Display the help menu. |
-| `-V, --version` | Display the script version (Current: v2.25). |
+* `<temp>C` - Set to a specific temperature until next schedule block (e.g., `21C`)
+
+* `off` - Turn the zone entirely OFF (Manual override)
+
+* `on` / `reset` - Delete manual overlays and resume the smart schedule.
+
+**Usage:**
+
+```
+# Set the Living Room to 21.5C
+./tado_set.sh --zone "Living Room" 21.5C
+
+# Turn off a specific zone
+./tado_set.sh --zone "Bedroom" off
+
+# Reset/Resume schedules for ALL zones in the default home
+./tado_set.sh reset
+
+```
+
+### 3. `tado_weather_control.sh` (Weather Automation)
+
+Automatically manages your zones based on real-time weather data.
+By continuously evaluating the outside temperature, this script prevents your heating from running on warm days.
+
+**Usage:**
+
+```
+# Run weather logic against the default configured city
+./tado_weather_control.sh
+
+# Run smart Auto mode (evaluates Inside vs. Outside temps)
+./tado_weather_control.sh auto
+
+# Run against a specific city
+./tado_weather_control.sh --city "London"
+
+```
+
+#### Automation (Cron)
+
+To fully automate the weather logic, set it up to run periodically using `cron`.
+
+Open your crontab (`crontab -e`) and add:
+
+```
+# Run every 15 minutes, piping logs to syslog
+*/15 * * * * /path/to/your/tado_weather_control.sh --syslog > /dev/null 2>&1
+
+```
 
 ## Configuration
 
-You can tweak the default behavior by editing the variables at the top of the `tado_weather_control.sh` file:
+You can tweak the default weather behavior by editing the variables at the top of the `tado_weather_control.sh` file:
 
-* `CITY_NAME`: Default city used for the Open-Meteo weather check (Default: `"Amsterdam"`).
-* `TEMP_OFF_THRESHOLD`: Outside temperature at which heating switches OFF (Default: `16.0`).
-* `TEMP_RESUME_THRESHOLD`: Outside temperature at which heating schedule resumes (Default: `15.0`).
-* `AUTO_MAX_DIFF`: Max allowed difference between inside/outside temps before Auto mode turns off heating (Default: `10.0`).
+* `CITY_NAME`: Default city used for the Open-Meteo weather check.
 
-*(Note: Keeping a 1°C gap between your OFF and RESUME thresholds creates a "deadzone" that prevents your heating from flapping on and off every few minutes if the temperature hovers around the limit).*
+* `TEMP_OFF_THRESHOLD`: Outside temperature at which heating switches OFF.
 
-## Automation (Cron)
+* `TEMP_RESUME_THRESHOLD`: Outside temperature at which heating schedule resumes.
 
-To fully automate the script, set it up to run periodically using `cron`. 
+* `AUTO_MAX_DIFF`: Max allowed difference between inside/outside temps before Auto mode turns off heating.
 
-Open your crontab:
-```bash
-crontab -e
-```
-
-Add the following line to run the script every 15 minutes and log the output:
-```bash
-*/15 * * * * /path/to/your/tado_weather_control.sh >> /tmp/tado_script.log 2>&1
-```
-
-Or, to integrate cleanly with system logs:
-```bash
-*/15 * * * * /path/to/your/tado_weather_control.sh --syslog > /dev/null 2>&1
-```
 
