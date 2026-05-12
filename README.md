@@ -1,4 +1,3 @@
-```
 # Tado Weather Control
 
 A robust, dependency-light Bash script designed to automatically manage your Tado Heating and Air Conditioning zones based on real-time weather data from Open-Meteo.
@@ -102,7 +101,5 @@ Add the following line to run the script every 15 minutes and log the output:
 Or, to integrate cleanly with system logs:
 ```bash
 */15 * * * * /path/to/your/tado_weather_control.sh --syslog > /dev/null 2>&1
-```
-
 ```
 
