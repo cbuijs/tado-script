@@ -6,13 +6,15 @@ By continuously evaluating the outside temperature (and optionally inside temper
 
 ## Features
 
-* **No Weather API Keys Required:** Uses the free, open Open-Meteo API for geocoding and weather fetching.
+* **No Weather API Keys Required:** Uses the free, open Open-Meteo API for geocoding and weather fetching (with automatic coordinate fallback).
 * **Smart Device Code Authentication:** Fully supports Tado's modern OAuth2 Device Code flow. No passwords stored.
 * **Auto Mode:** Intelligent evaluation comparing inside vs. outside temperatures.
 * **AC Support:** Automatically applies inverse logic for Air Conditioning zones.
 * **Manual Overrides:** Instantly force all zones `on`, `off`, `reset`, or to a specific temperature (e.g., `21C`).
+* **Multi-Home Support:** Specify exactly which Tado home to control by name or ID.
+* **Smart Zone Protection:** Respects existing manual temperature overrides unless specifically forced.
 * **Rate-Limit Safe:** Built-in exponential backoff to respect Tado's API limits.
-* **Syslog Integration:** Native logging capabilities for system-level monitoring.
+* **Comprehensive Logging:** Syslog integration and detailed output showing current vs. set temperatures for each zone.
 
 ## Prerequisites
 
@@ -65,13 +67,14 @@ Run the script manually to process the default weather logic:
 
 | Flag | Description |
 | :--- | :--- |
-| `--city <name>` | Override the default configured city for the weather check (e.g., `--city "New York"`). |
+| `--city <name>` | Override the default configured city for the weather check (e.g., `--city "New York"`). URL-encodes automatically. |
+| `--home <target>`| Specify which Tado home to control by exact Name or ID number. Useful for accounts with multiple homes. |
 | `--force` | Force overwrite existing manual temperature overrides on heating zones. By default, the script skips zones the user has manually adjusted. |
 | `--dryrun` | Simulates the execution. Fetches weather and evaluates states, but does NOT send PUT/DELETE commands to Tado. |
 | `--notime` | Disables internal date/time stamps in standard output logging. |
 | `--syslog` | Pipes output directly to your system's syslog (`/var/log/syslog` or `journalctl`) under the tag `tado_weather`. |
 | `-h, --help` | Display the help menu. |
-| `-V, --version` | Display the script version. |
+| `-V, --version` | Display the script version (Current: v2.25). |
 
 ## Configuration
 
