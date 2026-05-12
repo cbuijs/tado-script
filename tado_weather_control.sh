@@ -2,10 +2,16 @@
 
 # ==============================================================================
 # File: tado_weather_control.sh
-# Version: 2.17
-# Last Updated: 2026-05-12 04:40 CEST
+# Version: 2.21
+# Last Updated: 2026-05-12
 #
 # HISTORY:
+# v2.21 (2026-05-12) - Fixed jq adding literal double quotes to the URL-encoded city name.
+# v2.20 (2026-05-12) - Added fallback to Amsterdam coordinates if city geocoding fails.
+# v2.19 (2026-05-12) - Optimized jq processing in the evaluation loop for better 
+#                      performance and fixed URL-encoding for complex city names.
+# v2.18 (2026-05-12) - Added logging to always display the current and set 
+#                      temperatures when evaluating each zone.
 # v2.17 (2026-05-12) - Added 'auto' mode to dynamically switch off heating 
 #                      if outside > inside, or if inside > outside by 10C.
 # v2.16 (2026-05-12) - Added '--force' flag to prevent overwriting existing manual 
@@ -36,7 +42,7 @@
 # v1.0 (2026-05-12) - Initial release with Open-Meteo and Tado integration.
 # ==============================================================================
 
-SCRIPT_VERSION="2.16"
+SCRIPT_VERSION="2.21"
 
 # ==============================================================================
 # TADO WEATHER AUTOMATION SCRIPT
@@ -291,8 +297,8 @@ if [ -n "$FORCE_ACTION" ] && [ "$FORCE_ACTION" != "AUTO" ]; then
     log "Skipping weather check due to manual override. Main Action set to: $ACTION"
 else
     log "Resolving coordinates for city: $CITY_NAME..."
-    # Replace spaces with %20 for URL encoding
-    ENCODED_CITY=$(echo "$CITY_NAME" | sed 's/ /%20/g')
+    # Properly URL encode city name using jq (with -r to strip literal quotes)
+    ENCODED_CITY=$(jq -n -r --arg city "$CITY_NAME" '$city | @uri')
     GEO_URL="https://geocoding-api.open-meteo.com/v1/search?name=${ENCODED_CITY}&count=1&language=en&format=json"
 
     GEO_RESPONSE=$(curl -s "$GEO_URL")
@@ -306,8 +312,10 @@ else
     LONGITUDE=$(echo "$GEO_RESPONSE" | jq -r '.results[0].longitude // empty')
 
     if [ -z "$LATITUDE" ] || [ -z "$LONGITUDE" ]; then
-        log "ERROR: Could not find coordinates for city: $CITY_NAME. Please check the spelling."
-        exit 1
+        log "WARNING: Could not find coordinates for city: $CITY_NAME. Falling back to Amsterdam."
+        LATITUDE="52.3740"
+        LONGITUDE="4.8897"
+        CITY_NAME="Amsterdam (Fallback)"
     fi
 
     log "Found coordinates for $CITY_NAME -> Latitude: $LATITUDE, Longitude: $LONGITUDE"
@@ -450,12 +458,23 @@ while IFS='|' read -r ZONE_ID ZONE_NAME ZONE_TYPE; do
     ZONE_STATE_URL="https://my.tado.com/api/v2/homes/${HOME_ID}/zones/${ZONE_ID}/state"
     ZONE_STATE_DATA=$(call_tado_api "GET" "$ZONE_STATE_URL")
     
-    # Extract relevant fields to determine the state
-    CURRENT_OVERLAY_TYPE=$(echo "$ZONE_STATE_DATA" | jq -r '.overlayType')
-    CURRENT_POWER=$(echo "$ZONE_STATE_DATA" | jq -r '.setting.power')
-    CURRENT_TEMP_SETTING=$(echo "$ZONE_STATE_DATA" | jq -r '.setting.temperature.celsius')
-    CURRENT_INSIDE_TEMP=$(echo "$ZONE_STATE_DATA" | jq -r '.sensorDataPoints.insideTemperature.celsius // empty')
-    CURRENT_TERMINATION=$(echo "$ZONE_STATE_DATA" | jq -r '.overlay.termination.type')
+    # Extract relevant fields simultaneously to avoid 5 separate jq calls
+    IFS='|' read -r CURRENT_OVERLAY_TYPE CURRENT_POWER CURRENT_TEMP_SETTING CURRENT_INSIDE_TEMP CURRENT_TERMINATION <<< "$(echo "$ZONE_STATE_DATA" | jq -r '
+        "\(.overlayType // "")|\(.setting.power // "")|\(.setting.temperature.celsius // "")|\(.sensorDataPoints.insideTemperature.celsius // "")|\(.overlay.termination.type // "")"
+    ')"
+    
+    # Format display temperatures
+    DISPLAY_CUR_TEMP="${CURRENT_INSIDE_TEMP:-N/A}"
+    [ "$DISPLAY_CUR_TEMP" != "N/A" ] && DISPLAY_CUR_TEMP="${DISPLAY_CUR_TEMP}°C"
+    
+    if [ "$CURRENT_POWER" == "OFF" ]; then
+        DISPLAY_SET_TEMP="OFF"
+    else
+        DISPLAY_SET_TEMP="${CURRENT_TEMP_SETTING:-N/A}"
+        [ "$DISPLAY_SET_TEMP" != "N/A" ] && DISPLAY_SET_TEMP="${DISPLAY_SET_TEMP}°C"
+    fi
+    
+    log "   Current Temp: $DISPLAY_CUR_TEMP | Set Temp: $DISPLAY_SET_TEMP"
     
     ZONE_OVERLAY_URL="https://my.tado.com/api/v2/homes/${HOME_ID}/zones/${ZONE_ID}/overlay"
     
