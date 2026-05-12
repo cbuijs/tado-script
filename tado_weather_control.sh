@@ -2,47 +2,50 @@
 
 # ==============================================================================
 # File: tado_weather_control.sh
-# Version: 2.21
-# Last Updated: 2026-05-12
+# Version: 2.23
+# Last Updated: 2026-05-12 05:20 CEST
 #
 # HISTORY:
-# v2.21 (2026-05-12) - Fixed jq adding literal double quotes to the URL-encoded city name.
-# v2.20 (2026-05-12) - Added fallback to Amsterdam coordinates if city geocoding fails.
-# v2.19 (2026-05-12) - Optimized jq processing in the evaluation loop for better 
-#                      performance and fixed URL-encoding for complex city names.
-# v2.18 (2026-05-12) - Added logging to always display the current and set 
-#                      temperatures when evaluating each zone.
-# v2.17 (2026-05-12) - Added 'auto' mode to dynamically switch off heating 
-#                      if outside > inside, or if inside > outside by 10C.
-# v2.16 (2026-05-12) - Added '--force' flag to prevent overwriting existing manual 
-#                      heating temperatures unless explicitly requested.
-# v2.15 (2026-05-12) - Added '--city <name>' parameter to override the default city.
-# v2.14 (2026-05-12) - Replaced hardcoded coordinates with dynamic city name 
-#                      lookup via Open-Meteo Geocoding API.
-# v2.13 (2026-05-12) - Added 'reset' manual override to resume schedule for all zones.
-# v2.12 (2026-05-12) - Added support to manually set a temperature for heating zones 
-#                      until the next schedule block (e.g., '21C').
-# v2.11 (2026-05-12) - Added validation for command-line arguments to exit on unrecognized parameters.
-# v2.10 (2026-05-12) - Fixed logger unrecognized option error when logging dashes.
-# v2.9 (2026-05-12) - Added logger to the prerequisites check.
-# v2.8 (2026-05-12) - Decoupled --syslog from --notime so users can decide independently.
-# v2.7 (2026-05-12) - Added --syslog parameter to route logs to syslog (implies --notime).
-# v2.6 (2026-05-12) - Added --notime parameter to disable timestamps in logs.
-# v2.5 (2026-05-12) - Added support for AIR_CONDITIONING zones. AC actions are
-#                     always the opposite of HEATING actions.
-# v2.4 (2026-05-12) - Added --help (-h) and --version (-V) command-line arguments.
-# v2.3 (2026-05-12) - Added zone names to the logging output for better readability.
-# v2.2 (2026-05-12) - Fixed JSON parsing for Home ID to use '.homes[0].id'.
-# v2.1 (2026-05-12) - Added pre-checks to prevent redundant API calls if a zone 
-#                     is already in the desired target state.
-# v2.0 (2026-05-12) - Migrated to OAuth2 Device Code Flow (Tado deprecated password auth).
-#                     Added '--auth' command and automatic token rotation.
-# v1.2 (2026-05-12) - Added script header, versioning, and changelog history.
-# v1.1 (2026-05-12) - Added manual overrides ('on'/'off') and '--dryrun' flag.
-# v1.0 (2026-05-12) - Initial release with Open-Meteo and Tado integration.
+# v2.23 - Added '--home' parameter to specify which Tado home to 
+#         control by name or ID.
+# v2.22 - Added Home Name to the logging output alongside Home ID.
+# v2.21 - Fixed jq adding literal double quotes to the URL-encoded city name.
+# v2.20 - Added fallback to Amsterdam coordinates if city geocoding fails.
+# v2.19 - Optimized jq processing in the evaluation loop for better 
+#         performance and fixed URL-encoding for complex city names.
+# v2.18 - Added logging to always display the current and set 
+#         temperatures when evaluating each zone.
+# v2.17 - Added 'auto' mode to dynamically switch off heating 
+#         if outside > inside, or if inside > outside by 10C.
+# v2.16 - Added '--force' flag to prevent overwriting existing manual 
+#         heating temperatures unless explicitly requested.
+# v2.15 - Added '--city <name>' parameter to override the default city.
+# v2.14 - Replaced hardcoded coordinates with dynamic city name 
+#         lookup via Open-Meteo Geocoding API.
+# v2.13 - Added 'reset' manual override to resume schedule for all zones.
+# v2.12 - Added support to manually set a temperature for heating zones 
+#         until the next schedule block (e.g., '21C').
+# v2.11 - Added validation for command-line arguments to exit on unrecognized parameters.
+# v2.10 - Fixed logger unrecognized option error when logging dashes.
+# v2.9  - Added logger to the prerequisites check.
+# v2.8  - Decoupled --syslog from --notime so users can decide independently.
+# v2.7  - Added --syslog parameter to route logs to syslog (implies --notime).
+# v2.6  - Added --notime parameter to disable timestamps in logs.
+# v2.5  - Added support for AIR_CONDITIONING zones. AC actions are
+#         always the opposite of HEATING actions.
+# v2.4  - Added --help (-h) and --version (-V) command-line arguments.
+# v2.3  - Added zone names to the logging output for better readability.
+# v2.2  - Fixed JSON parsing for Home ID to use '.homes[0].id'.
+# v2.1  - Added pre-checks to prevent redundant API calls if a zone 
+#         is already in the desired target state.
+# v2.0  - Migrated to OAuth2 Device Code Flow (Tado deprecated password auth).
+#         Added '--auth' command and automatic token rotation.
+# v1.2  - Added script header, versioning, and changelog history.
+# v1.1  - Added manual overrides ('on'/'off') and '--dryrun' flag.
+# v1.0  - Initial release with Open-Meteo and Tado integration.
 # ==============================================================================
 
-SCRIPT_VERSION="2.21"
+SCRIPT_VERSION="2.25"
 
 # ==============================================================================
 # TADO WEATHER AUTOMATION SCRIPT
@@ -127,6 +130,7 @@ show_help() {
     echo "  --city <name>    Override the default city ($CITY_NAME) for weather data."
     echo "  --dryrun         Run the script normally but do not send commands to Tado."
     echo "  --force          Overwrite existing manual temperature settings on heating zones."
+    echo "  --home <target>  Specify which Tado home to control by exact Name or ID number."
     echo "  --notime         Disable date/time stamps in the logging output."
     echo "  --syslog         Output logs to syslog in addition to standard output."
     echo "  auto             Manual override: Smart evaluation comparing inside/outside temps."
@@ -147,12 +151,20 @@ FORCE_ACTION=""
 TARGET_TEMP=""
 RUN_AUTH=0
 EXPECT_CITY=0
+EXPECT_HOME=0
 FORCE_FLAG=0
+TARGET_HOME=""
 
 for arg in "$@"; do
     if [ "$EXPECT_CITY" -eq 1 ]; then
         CITY_NAME="$arg"
         EXPECT_CITY=0
+        continue
+    fi
+    
+    if [ "$EXPECT_HOME" -eq 1 ]; then
+        TARGET_HOME="$arg"
+        EXPECT_HOME=0
         continue
     fi
 
@@ -162,6 +174,8 @@ for arg in "$@"; do
         show_version
     elif [ "$arg" == "--city" ]; then
         EXPECT_CITY=1
+    elif [ "$arg" == "--home" ]; then
+        EXPECT_HOME=1
     elif [ "$arg" == "--dryrun" ]; then
         DRY_RUN=1
         log "NOTICE: Running in DRY RUN mode. No actions will be sent to Tado."
@@ -206,6 +220,11 @@ done
 
 if [ "$EXPECT_CITY" -eq 1 ]; then
     log "ERROR: --city parameter requires a city name argument (e.g., --city \"New York\")."
+    exit 1
+fi
+
+if [ "$EXPECT_HOME" -eq 1 ]; then
+    log "ERROR: --home parameter requires a home name or ID argument."
     exit 1
 fi
 
@@ -426,15 +445,36 @@ call_tado_api() {
 # 8. GET TADO HOME ID & ZONES
 # ==============================================================================
 HOME_DATA=$(call_tado_api "GET" "https://my.tado.com/api/v2/me")
-# Parse 'id' from the first object inside the 'homes' array
-HOME_ID=$(echo "$HOME_DATA" | jq -r '.homes[0].id')
+
+if [ -n "$TARGET_HOME" ]; then
+    log "Searching for Home matching ID or Name: '$TARGET_HOME'..."
+    # Match against id (converted to string) or name. Output ID|NAME format.
+    HOME_MATCH=$(echo "$HOME_DATA" | jq -r --arg target "$TARGET_HOME" '
+        .homes[] | select((.id | tostring) == $target or .name == $target) | "\(.id)|\(.name)"
+    ' | head -n 1)
+    
+    if [ -z "$HOME_MATCH" ]; then
+        log "ERROR: Could not find a Tado Home matching: '$TARGET_HOME'."
+        log "Please check the exact name or ID."
+        exit 1
+    fi
+    
+    HOME_ID=$(echo "$HOME_MATCH" | cut -d'|' -f1)
+    HOME_NAME=$(echo "$HOME_MATCH" | cut -d'|' -f2)
+else
+    # Parse 'id' and 'name' from the first object inside the 'homes' array by default
+    HOME_ID=$(echo "$HOME_DATA" | jq -r '.homes[0].id')
+    HOME_NAME=$(echo "$HOME_DATA" | jq -r '.homes[0].name // "Unknown"')
+fi
 
 if [ -z "$HOME_ID" ] || [ "$HOME_ID" == "null" ]; then
     log "ERROR: Could not retrieve Home ID."
     log "Raw response from Tado: $HOME_DATA"
     exit 1
 fi
-log "Successfully retrieved Home ID: $HOME_ID"
+
+HOME_NAME="${HOME_NAME:-Unknown}"
+log "Successfully retrieved Home: '$HOME_NAME' (ID: $HOME_ID)"
 
 ZONES_DATA=$(call_tado_api "GET" "https://my.tado.com/api/v2/homes/${HOME_ID}/zones")
 
