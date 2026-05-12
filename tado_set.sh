@@ -152,17 +152,35 @@ echo "$ZONES_DATA" | jq -c '.[] | select(.type=="HEATING" or .type=="AIR_CONDITI
     ZONE_NAME=$(echo "$zone" | jq -r '.name')
     ZONE_TYPE=$(echo "$zone" | jq -r '.type')
     OVERLAY_URL="https://my.tado.com/api/v2/homes/${HOME_ID}/zones/${ZONE_ID}/overlay"
+    STATE_URL="https://my.tado.com/api/v2/homes/${HOME_ID}/zones/${ZONE_ID}/state"
     
     log "Applying action '$ACTION_ARG' to Zone: '$ZONE_NAME'..."
     
+    STATE_DATA=$(call_tado_api "GET" "$STATE_URL")
+    IFS='|' read -r CURRENT_OVERLAY_TYPE CURRENT_POWER CURRENT_TEMP_SETTING CURRENT_TERMINATION <<< "$(echo "$STATE_DATA" | jq -r '
+        "\(.overlayType // "")|\(.setting.power // "")|\(.setting.temperature.celsius // "")|\(.overlay.termination.type // "")"
+    ')"
+    
     if [ "$ACTION_ARG" == "TURN_OFF" ]; then
+        if [ "$CURRENT_OVERLAY_TYPE" == "MANUAL" ] && [ "$CURRENT_POWER" == "OFF" ]; then
+            log "  -> Zone is already set to MANUAL OFF. Skipping."
+            continue
+        fi
         PAYLOAD="{\"setting\": {\"type\": \"$ZONE_TYPE\", \"power\": \"OFF\"}, \"termination\": {\"type\": \"MANUAL\"}}"
         call_tado_api "PUT" "$OVERLAY_URL" "$PAYLOAD" > /dev/null
         log "  -> Set to OFF"
     elif [ "$ACTION_ARG" == "RESUME" ]; then
+        if [ "$CURRENT_OVERLAY_TYPE" == "null" ] || [ -z "$CURRENT_OVERLAY_TYPE" ]; then
+            log "  -> Zone is already following the schedule. Skipping."
+            continue
+        fi
         call_tado_api "DELETE" "$OVERLAY_URL" > /dev/null
         log "  -> Schedule Resumed"
     elif [ "$ACTION_ARG" == "SET_TEMP" ]; then
+        if [ "$CURRENT_POWER" == "ON" ] && [ "$CURRENT_TEMP_SETTING" == "$TARGET_TEMP" ] && [ "$CURRENT_TERMINATION" == "TADO_MODE" ]; then
+            log "  -> Zone is already set to ${TARGET_TEMP}°C. Skipping."
+            continue
+        fi
         PAYLOAD="{\"setting\": {\"type\": \"$ZONE_TYPE\", \"power\": \"ON\", \"temperature\": {\"celsius\": $TARGET_TEMP}}, \"termination\": {\"type\": \"TADO_MODE\"}}"
         call_tado_api "PUT" "$OVERLAY_URL" "$PAYLOAD" > /dev/null
         log "  -> Temperature set to ${TARGET_TEMP}°C"
