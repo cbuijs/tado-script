@@ -10,6 +10,8 @@ This suite includes an automated weather-based climate control script to save en
 
 * **Weather Automation:** Intelligently checks Open-Meteo to disable heating on unusually warm days or compare inside vs. outside temperatures (`tado_weather_control.sh`).
 
+* **Presence Detection:** Scan the local ARP table to see if your phone is home. Automatically shut off heating if the house is empty.
+
 * **Instant Overrides:** Turn zones `on`, `off`, `reset`, or to specific temperatures via the command line (`tado_set.sh`).
 
 * **Easy Status Checks:** Instantly see the temperature and schedule state of every zone in your home. Or, output directly to JSON for third-party integrations (`tado_get.sh`).
@@ -32,7 +34,6 @@ Ensure the following common packages are installed on your system:
 
 ```
 sudo apt-get install curl jq bc
-
 ```
 
 ## Setup & Authentication
@@ -41,14 +42,12 @@ sudo apt-get install curl jq bc
 
    ```
    chmod +x tado_weather_control.sh tado_get.sh tado_set.sh
-   
    ```
 
 2. Run the one-time authentication flow to securely link your Tado account. **You only need to do this on one of the scripts; they share the same token (`~/.tado_token`)**:
 
    ```
    ./tado_get.sh --auth
-   
    ```
 
    *The script will provide a link. Open it in your browser, log in to Tado, and approve the application.*
@@ -87,7 +86,6 @@ Lists all zones across all your Tado homes by default, including their ID, name,
 
 # Get details for a specific zone only
 ./tado_get.sh --zone "Living Room"
-
 ```
 
 ### 2. `tado_set.sh` (Manual Override)
@@ -123,7 +121,6 @@ Manually force the state or temperature of specific zones, bypassing schedules.
 
 # Reset/Resume schedules for ALL zones in the default home
 ./tado_set.sh reset
-
 ```
 
 ### 3. `tado_weather_control.sh` (Weather Automation)
@@ -138,6 +135,8 @@ By continuously evaluating the outside temperature, this script prevents your he
 * `-V`, `--version`: Show the script version and exit.
 
 * `--auth`: Run the interactive OAuth2 setup to link your Tado account.
+
+* `--auto-off[=MACs]`: Check local ARP table for presence. If absent, forces ALL zones OFF.
 
 * `--city <name>`: Override the default city (configured in the script) for Open-Meteo weather data.
 
@@ -191,7 +190,16 @@ Instead of relying solely on static weather thresholds, this mode intelligently 
 
 * If **Inside Temp > Outside Temp** by more than `AUTO_MAX_DIFF` (default 10°C): Forces Heating OFF to save extreme heating costs.
 
-**3. Protection & Efficiency Safeguards**
+**3. Presence Detection (Auto-Off)**
+Using the `--auto-off` flag, the script will scan the host system's ARP table (using `ip neigh` or `arp`) to detect specified MAC addresses (e.g., your smartphone).
+
+* If **any** matching MAC is found on the network, the script proceeds with normal weather operations.
+
+* If **no** MAC addresses are found (meaning the house is empty), it bypasses weather checks and immediately forces **all** zones to **MANUAL OFF**.
+
+* When you return home and the MAC is detected again, it drops back into the smart weather evaluation (e.g., automatically resuming schedules if it is cold outside).
+
+**4. Protection & Efficiency Safeguards**
 
 * **Manual Override Protection:** If a heating zone already has a manual temperature set (e.g., someone boosted the heat via the physical thermostat or app), the script **will skip** that zone to respect human preference. You can bypass this using the `--force` flag.
 
@@ -206,15 +214,11 @@ Instead of relying solely on static weather thresholds, this mode intelligently 
 # Run smart Auto mode (evaluates Inside vs. Outside temps)
 ./tado_weather_control.sh auto
 
-# Run against a specific city
-./tado_weather_control.sh --city "London"
+# Ensure heating is OFF if no one is home based on MAC address presence
+./tado_weather_control.sh --auto-off="00:11:22:33:44:55,aa:bb:cc:dd:ee:ff"
 
 # Run weather logic and overwrite any manual user settings
 ./tado_weather_control.sh --force
-
-# Perform a dry run to see what the script WOULD do
-./tado_weather_control.sh --dryrun
-
 ```
 
 #### Automation (Cron)
@@ -226,7 +230,6 @@ Open your crontab (`crontab -e`) and add:
 ```
 # Run every 15 minutes, piping logs to syslog
 */15 * * * * /path/to/your/tado_weather_control.sh --syslog > /dev/null 2>&1
-
 ```
 
 ## Configuration
@@ -240,5 +243,7 @@ You can tweak the default weather behavior by editing the variables at the top o
 * `TEMP_RESUME_THRESHOLD`: Outside temperature at which heating schedule resumes.
 
 * `AUTO_MAX_DIFF`: Max allowed difference between inside/outside temps before Auto mode turns off heating.
+
+* `PRESENCE_MACS`: Comma-separated list of MAC addresses to track when using `--auto-off`.
 
 

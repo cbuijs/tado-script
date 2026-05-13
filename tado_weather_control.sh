@@ -2,10 +2,13 @@
 
 # ==============================================================================
 # File: tado_weather_control.sh
-# Version: 2.26
+# Version: 2.27
 # Last Updated: 2026-05-13
 #
 # HISTORY:
+# v2.27 - Added '--auto-off' parameter and ARP-based presence detection to 
+#         automatically turn off all zones when no configured MAC addresses 
+#         are found on the local network.
 # v2.26 - Added comprehensive State Tracking. The script now remembers what 
 #         it previously set. If it detects a manual change from the app or 
 #         thermostat, it will skip modifying that zone to respect user 
@@ -38,7 +41,7 @@
 # v1.0  - Initial release.
 # ==============================================================================
 
-SCRIPT_VERSION="2.26"
+SCRIPT_VERSION="2.27"
 
 # ==============================================================================
 # 1. USER CONFIGURATION
@@ -59,6 +62,11 @@ TEMP_RESUME_THRESHOLD=15.0
 
 # Auto Mode Threshold (Celsius)
 AUTO_MAX_DIFF=10.0
+
+# Auto-Off Presence Detection (MAC Addresses)
+# Comma-separated list of MAC addresses to check for presence.
+# Leave empty if you prefer to pass them via the command-line argument.
+PRESENCE_MACS=""
 
 # ==============================================================================
 # 2. HELPER FUNCTIONS
@@ -97,6 +105,8 @@ show_help() {
     echo "  -h, --help       Show this help message and exit."
     echo "  -V, --version    Show the script version and exit."
     echo "  --auth           Run the interactive OAuth2 setup to link your account."
+    echo "  --auto-off[=MACs] Check ARP table for presence MACs (comma-separated)."
+    echo "                   If absent, bypasses weather and forces ALL zones OFF."
     echo "  --city <name>    Override the default city ($CITY_NAME)."
     echo "  --dryrun         Run the script normally but do not send commands to Tado."
     echo "  --force          Overwrite existing user manual settings and reset tracking memory."
@@ -161,6 +171,7 @@ EXPECT_CITY=0
 EXPECT_HOME=0
 FORCE_FLAG=0
 TARGET_HOME=""
+ENABLE_AUTO_OFF=0
 
 for arg in "$@"; do
     if [ "$EXPECT_CITY" -eq 1 ]; then
@@ -182,6 +193,11 @@ for arg in "$@"; do
     elif [ "$arg" == "--force" ]; then FORCE_FLAG=1; log "NOTICE: Force mode enabled. User settings will be overwritten."
     elif [ "$arg" == "--notime" ]; then SHOW_TIME=0
     elif [ "$arg" == "--syslog" ]; then USE_SYSLOG=1
+    elif [[ "$arg" == --auto-off=* ]]; then
+        ENABLE_AUTO_OFF=1
+        PRESENCE_MACS="${arg#*=}"
+    elif [ "$arg" == "--auto-off" ]; then
+        ENABLE_AUTO_OFF=1
     elif [ "$arg" == "auto" ]; then FORCE_ACTION="AUTO"
     elif [ "$arg" == "on" ]; then FORCE_ACTION="RESUME"
     elif [ "$arg" == "off" ]; then FORCE_ACTION="TURN_OFF"
@@ -201,14 +217,45 @@ for arg in "$@"; do
     fi
 done
 
-for cmd in curl jq bc logger; do
+for cmd in curl jq bc logger grep; do
     if ! command -v $cmd &> /dev/null; then log "ERROR: Required command '$cmd' is not installed."; exit 1; fi
 done
 
 # ==============================================================================
+# 3.5. PRESENCE DETECTION (AUTO-OFF)
+# ==============================================================================
+if [ "$ENABLE_AUTO_OFF" -eq 1 ]; then
+    if [ -z "$PRESENCE_MACS" ]; then
+        log "ERROR: --auto-off flag used but PRESENCE_MACS is empty in configuration/argument."
+        exit 1
+    fi
+    
+    # Remove spaces and trailing/leading commas, then replace commas with pipes for regex
+    MAC_REGEX=$(echo "$PRESENCE_MACS" | tr -d ' ' | sed 's/^,*//;s/,*$//' | tr ',' '|')
+    log "Checking ARP table for presence MACs..."
+    
+    # Use 'ip neigh' if available (modern linux), fallback to 'arp -an'
+    if command -v ip &> /dev/null; then
+        ARP_OUTPUT=$(ip neigh show)
+    elif command -v arp &> /dev/null; then
+        ARP_OUTPUT=$(arp -an)
+    else
+        log "ERROR: Neither 'ip' nor 'arp' commands are available for presence detection."
+        exit 1
+    fi
+    
+    if echo "$ARP_OUTPUT" | grep -iE "($MAC_REGEX)" > /dev/null; then
+        log "Presence detected in ARP table. Continuing normally."
+    else
+        log "No configured MAC addresses found in ARP table. Forcing ALL zones OFF."
+        # Override the normal action strictly to TURN_OFF
+        FORCE_ACTION="TURN_OFF"
+    fi
+fi
+
+# ==============================================================================
 # 4. AUTHENTICATION & WEATHER FETCHING
 # ==============================================================================
-# (OAuth 2.0 Flow Omitted for Brevity - Keeping Original Implementation)
 if [ "$RUN_AUTH" -eq 1 ]; then
     log "Starting Tado Device Code Authorization Flow..."
     AUTH_RES=$(curl -s -X POST "https://login.tado.com/oauth2/device_authorize" -d "client_id=$TADO_CLIENT_ID" -d "scope=offline_access")
@@ -236,7 +283,7 @@ if [ ! -f "$TOKEN_FILE" ]; then log "ERROR: Auth token missing. Run --auth first
 
 if [ -n "$FORCE_ACTION" ] && [ "$FORCE_ACTION" != "AUTO" ]; then
     ACTION="$FORCE_ACTION"
-    log "Skipping weather check due to manual override: $ACTION"
+    log "Skipping weather check due to manual override/presence config: $ACTION"
 else
     log "Resolving coordinates for city: $CITY_NAME..."
     ENCODED_CITY=$(jq -n -r --arg city "$CITY_NAME" '$city | @uri')
