@@ -2,10 +2,11 @@
 
 # ==============================================================================
 # File: tado_weather_control.sh
-# Version: 2.27
+# Version: 2.28
 # Last Updated: 2026-05-13
 #
 # HISTORY:
+# v2.28 - Added '--heating-only' parameter to ignore non-heating zones.
 # v2.27 - Added '--auto-off' parameter and ARP-based presence detection to 
 #         automatically turn off all zones when no configured MAC addresses 
 #         are found on the local network.
@@ -41,7 +42,7 @@
 # v1.0  - Initial release.
 # ==============================================================================
 
-SCRIPT_VERSION="2.27"
+SCRIPT_VERSION="2.28"
 
 # ==============================================================================
 # 1. USER CONFIGURATION
@@ -110,6 +111,7 @@ show_help() {
     echo "  --city <name>    Override the default city ($CITY_NAME)."
     echo "  --dryrun         Run the script normally but do not send commands to Tado."
     echo "  --force          Overwrite existing user manual settings and reset tracking memory."
+    echo "  --heating-only   Only apply to heating zones, ignore air conditioning."
     echo "  --home <target>  Specify which Tado home to control by Name or ID."
     echo "  --notime         Disable date/time stamps in the logging output."
     echo "  --syslog         Output logs to syslog in addition to standard output."
@@ -172,6 +174,7 @@ EXPECT_HOME=0
 FORCE_FLAG=0
 TARGET_HOME=""
 ENABLE_AUTO_OFF=0
+HEATING_ONLY=0
 
 for arg in "$@"; do
     if [ "$EXPECT_CITY" -eq 1 ]; then
@@ -191,6 +194,7 @@ for arg in "$@"; do
     elif [ "$arg" == "--home" ]; then EXPECT_HOME=1
     elif [ "$arg" == "--dryrun" ]; then DRY_RUN=1; log "NOTICE: Running in DRY RUN mode."
     elif [ "$arg" == "--force" ]; then FORCE_FLAG=1; log "NOTICE: Force mode enabled. User settings will be overwritten."
+    elif [ "$arg" == "--heating-only" ]; then HEATING_ONLY=1
     elif [ "$arg" == "--notime" ]; then SHOW_TIME=0
     elif [ "$arg" == "--syslog" ]; then USE_SYSLOG=1
     elif [[ "$arg" == --auto-off=* ]]; then
@@ -344,7 +348,12 @@ if [ -z "$HOME_ID" ]; then log "ERROR: Could not retrieve Home ID."; exit 1; fi
 log "Successfully retrieved Home: '${HOME_NAME}' (ID: $HOME_ID)"
 
 ZONES_DATA=$(call_tado_api "GET" "https://my.tado.com/api/v2/homes/${HOME_ID}/zones")
-TARGET_ZONES=$(echo "$ZONES_DATA" | jq -r '.[] | select(.type=="HEATING" or .type=="AIR_CONDITIONING") | "\(.id)|\(.name)|\(.type)"')
+
+if [ "$HEATING_ONLY" -eq 1 ]; then
+    TARGET_ZONES=$(echo "$ZONES_DATA" | jq -r '.[] | select(.type=="HEATING") | "\(.id)|\(.name)|\(.type)"')
+else
+    TARGET_ZONES=$(echo "$ZONES_DATA" | jq -r '.[] | select(.type=="HEATING" or .type=="AIR_CONDITIONING") | "\(.id)|\(.name)|\(.type)"')
+fi
 
 # ==============================================================================
 # 7. APPLY ACTIONS & STATE TRACKING

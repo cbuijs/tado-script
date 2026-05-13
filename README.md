@@ -34,6 +34,7 @@ Ensure the following common packages are installed on your system:
 
 ```
 sudo apt-get install curl jq bc
+
 ```
 
 ## Setup & Authentication
@@ -42,12 +43,14 @@ sudo apt-get install curl jq bc
 
    ```
    chmod +x tado_weather_control.sh tado_get.sh tado_set.sh
+   
    ```
 
 2. Run the one-time authentication flow to securely link your Tado account. **You only need to do this on one of the scripts; they share the same token (`~/.tado_token`)**:
 
    ```
    ./tado_get.sh --auth
+   
    ```
 
    *The script will provide a link. Open it in your browser, log in to Tado, and approve the application.*
@@ -86,6 +89,7 @@ Lists all zones across all your Tado homes by default, including their ID, name,
 
 # Get details for a specific zone only
 ./tado_get.sh --zone "Living Room"
+
 ```
 
 ### 2. `tado_set.sh` (Manual Override)
@@ -121,6 +125,7 @@ Manually force the state or temperature of specific zones, bypassing schedules.
 
 # Reset/Resume schedules for ALL zones in the default home
 ./tado_set.sh reset
+
 ```
 
 ### 3. `tado_weather_control.sh` (Weather Automation)
@@ -143,6 +148,8 @@ By continuously evaluating the outside temperature, this script prevents your he
 * `--dryrun`: Run the script normally and evaluate logic, but do not send actual commands to Tado.
 
 * `--force`: Overwrite existing manual temperature settings on heating zones. (By default, manual user adjustments are respected).
+
+* `--heating-only`: Only apply to heating zones, ignore air conditioning zones.
 
 * `--home <target>`: Specify which Tado home to control by exact Name or ID.
 
@@ -219,6 +226,10 @@ Using the `--auto-off` flag, the script will scan the host system's ARP table (u
 
 # Run weather logic and overwrite any manual user settings
 ./tado_weather_control.sh --force
+
+# Run weather logic but only apply changes to Heating zones
+./tado_weather_control.sh --heating-only
+
 ```
 
 #### Automation (Cron)
@@ -230,6 +241,7 @@ Open your crontab (`crontab -e`) and add:
 ```
 # Run every 15 minutes, piping logs to syslog
 */15 * * * * /path/to/your/tado_weather_control.sh --syslog > /dev/null 2>&1
+
 ```
 
 ## Configuration
