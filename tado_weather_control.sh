@@ -2,10 +2,13 @@
 
 # ==============================================================================
 # File: tado_weather_control.sh
-# Version: 2.28
+# Version: 2.30
 # Last Updated: 2026-05-13
 #
 # HISTORY:
+# v2.30 - Added empty body check to 'call_weather_api' wrapper.
+# v2.29 - Added 'call_weather_api' wrapper to implement retry logic for 
+#         Open-Meteo geocoding and forecast API calls.
 # v2.28 - Added '--heating-only' parameter to ignore non-heating zones.
 # v2.27 - Added '--auto-off' parameter and ARP-based presence detection to 
 #         automatically turn off all zones when no configured MAC addresses 
@@ -42,7 +45,7 @@
 # v1.0  - Initial release.
 # ==============================================================================
 
-SCRIPT_VERSION="2.28"
+SCRIPT_VERSION="2.30"
 
 # ==============================================================================
 # 1. USER CONFIGURATION
@@ -285,23 +288,60 @@ fi
 
 if [ ! -f "$TOKEN_FILE" ]; then log "ERROR: Auth token missing. Run --auth first."; exit 1; fi
 
+# --- Weather API Wrapper Function ---
+call_weather_api() {
+    local URL="$1"
+    local RETRIES=0
+    local MAX_RETRIES=3
+    local SLEEP_TIME=5
+
+    while [ "$RETRIES" -lt "$MAX_RETRIES" ]; do
+        local RESPONSE=$(curl -s -w "\n%{http_code}" "$URL")
+        local HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        local BODY=$(echo "$RESPONSE" | sed '$d')
+
+        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            if [ -n "$BODY" ]; then
+                echo "$BODY"
+                return 0
+            else
+                log "WARNING: Weather API returned HTTP ${HTTP_CODE} but with an empty body. Retrying in ${SLEEP_TIME}s... ($((RETRIES+1))/$MAX_RETRIES)"
+            fi
+        else
+            log "WARNING: Weather API returned HTTP ${HTTP_CODE}. Retrying in ${SLEEP_TIME}s... ($((RETRIES+1))/$MAX_RETRIES)"
+        fi
+        
+        sleep "$SLEEP_TIME"
+        RETRIES=$((RETRIES + 1))
+    done
+    return 1
+}
+
 if [ -n "$FORCE_ACTION" ] && [ "$FORCE_ACTION" != "AUTO" ]; then
     ACTION="$FORCE_ACTION"
     log "Skipping weather check due to manual override/presence config: $ACTION"
 else
     log "Resolving coordinates for city: $CITY_NAME..."
     ENCODED_CITY=$(jq -n -r --arg city "$CITY_NAME" '$city | @uri')
-    GEO_RESPONSE=$(curl -s "https://geocoding-api.open-meteo.com/v1/search?name=${ENCODED_CITY}&count=1&language=en&format=json")
+    
+    # Using the new retry wrapper for Geocoding
+    GEO_RESPONSE=$(call_weather_api "https://geocoding-api.open-meteo.com/v1/search?name=${ENCODED_CITY}&count=1&language=en&format=json")
     LATITUDE=$(echo "$GEO_RESPONSE" | jq -r '.results[0].latitude // empty')
     LONGITUDE=$(echo "$GEO_RESPONSE" | jq -r '.results[0].longitude // empty')
 
     if [ -z "$LATITUDE" ] || [ -z "$LONGITUDE" ]; then
-        log "WARNING: Could not find coordinates. Falling back to Amsterdam."
+        log "WARNING: Could not find coordinates from API. Falling back to Amsterdam."
         LATITUDE="52.3740"; LONGITUDE="4.8897"
     fi
 
-    WEATHER_RESPONSE=$(curl -s "https://api.open-meteo.com/v1/forecast?latitude=${LATITUDE}&longitude=${LONGITUDE}&current_weather=true")
+    # Using the new retry wrapper for Weather Forecast
+    WEATHER_RESPONSE=$(call_weather_api "https://api.open-meteo.com/v1/forecast?latitude=${LATITUDE}&longitude=${LONGITUDE}&current_weather=true")
     CURRENT_TEMP=$(echo "$WEATHER_RESPONSE" | jq -r '.current_weather.temperature')
+
+    if [ -z "$CURRENT_TEMP" ] || [ "$CURRENT_TEMP" == "null" ]; then
+        log "ERROR: Failed to retrieve current temperature after retries. Exiting to prevent incorrect automation."
+        exit 1
+    fi
 
     log "Current outside temperature is: ${CURRENT_TEMP}°C"
     ACTION="NONE"
